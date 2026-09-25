@@ -1,4 +1,4 @@
 streamlit
 langgraph
-langchain-openai
+langchain-groq
 pydantic
