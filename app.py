@@ -57,7 +57,7 @@ class AgentState(TypedDict):
 def parse_intent_node(state: AgentState) -> Dict[str, Any]:
     """Stage 1: Intent Parsing using Groq Structured Output"""
     llm = ChatGroq(
-        model="llama-3.1-8b-instant",
+        model="llama-3.3-70b-versatile",
         temperature=0,
         groq_api_key=groq_key
     )
