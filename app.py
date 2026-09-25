@@ -30,10 +30,10 @@ if not groq_key:
     st.stop()
 
 # ==========================================
-# 2. Sidebar: RBAC & Demo Preset Scenarios
+# 2. Sidebar: RBAC & Demo Scenarios
 # ==========================================
 st.sidebar.title("🛡️ Enterprise Governance")
-st.sidebar.caption("⚙️ Component: API Gateway / IAM Layer")
+st.sidebar.caption("⚙️ Component: Software AG API Gateway")
 user_role = st.sidebar.selectbox("Active User Role", ["System Administrator", "Tier 1 Operator"])
 
 st.sidebar.divider()
@@ -58,7 +58,7 @@ preset_prompts = {
 user_prompt = st.text_input("Command Prompt:", value=preset_prompts[preset_choice])
 
 # ==========================================
-# 3. Pydantic Models & Agent State Definition
+# 3. Pydantic Models & State Definition
 # ==========================================
 class ActionIntent(BaseModel):
     action_type: str = Field(description="Action: 'apply_credit', 'update_record', 'query', or 'delete_purge'")
@@ -71,9 +71,10 @@ class AgentState(TypedDict):
     parsed_intent: Optional[Dict[str, Any]]
     compliance_passed: Optional[bool]
     compliance_reason: Optional[str]
-    discovered_resources: Optional[Dict[str, Any]]
-    simulation_result: Optional[Dict[str, Any]]
+    predict_metadata: Optional[Dict[str, Any]]
+    connx_sql: Optional[str]
     natural_code: Optional[str]
+    adabas_impact: Optional[Dict[str, Any]]
     before_df: Optional[pd.DataFrame]
     after_df: Optional[pd.DataFrame]
     human_approved: Optional[bool]
@@ -81,71 +82,88 @@ class AgentState(TypedDict):
     audit_log: List[str]
 
 # ==========================================
-# 4. LangGraph Node Definitions
+# 4. Agent Pipeline Nodes (Software AG Components)
 # ==========================================
 def parse_and_compliance_node(state: AgentState) -> Dict[str, Any]:
-    """Stage 1: Intent Parsing (Groq LLM) & Stage 2: Compliance Guardrails"""
+    """Stage 1: Intent Parsing (Groq AI Gateway) & Policy Check"""
     logs = state.get("audit_log", [])
     
-    # 1. Groq Open-Weights LLM Structured Extraction
     llm = ChatGroq(model="openai/gpt-oss-20b", temperature=0, groq_api_key=groq_key)
     structured_llm = llm.with_structured_output(ActionIntent)
     parsed: ActionIntent = structured_llm.invoke(f"Parse this request: '{state['raw_prompt']}'")
     intent = parsed.model_dump()
-    logs.append("[STAGE 1: PARSE] Intent parsed via Groq AI Gateway (openai/gpt-oss-20b).")
+    logs.append("[STAGE 1: PARSE] Intent parsed via Groq AI Gateway.")
 
-    # 2. Compliance Guardrails Evaluation
     passed = True
     reason = "Transaction within safe operational boundaries."
     
     if intent.get("action_type") == "delete_purge":
         passed = False
-        reason = "CRITICAL: 'delete_purge' operations blocked by Enterprise Data Governance policy."
-        logs.append(f"[STAGE 2: COMPLIANCE] ❌ REJECTED: {reason}")
+        reason = "CRITICAL: 'delete_purge' operations blocked by Enterprise Data Governance."
+        logs.append(f"[STAGE 2: GUARDRAILS] ❌ REJECTED: {reason}")
     elif intent.get("amount", 0) > 5000:
         passed = False
-        reason = "HIGH RISK: Transaction amount exceeds $5,000 threshold."
-        logs.append(f"[STAGE 2: COMPLIANCE] ⚠️ FLAGGED: {reason}")
+        reason = "HIGH RISK: Amount exceeds $5,000 threshold."
+        logs.append(f"[STAGE 2: GUARDRAILS] ⚠️ FLAGGED: {reason}")
     else:
-        logs.append("[STAGE 2: COMPLIANCE] ✅ Cleared Enterprise Policy Check.")
+        logs.append("[STAGE 2: GUARDRAILS] ✅ Cleared Enterprise Guardrails.")
 
     return {"parsed_intent": intent, "compliance_passed": passed, "compliance_reason": reason, "audit_log": logs}
 
-def discover_resources_node(state: AgentState) -> Dict[str, Any]:
-    """Stage 3: Metadata Discovery (Software AG Predict Data Dictionary)"""
+def predict_lookup_node(state: AgentState) -> Dict[str, Any]:
+    """Stage 2: Metadata Catalog Lookup (Software AG Predict)"""
     intent = state.get("parsed_intent", {})
     logs = state.get("audit_log", [])
     
-    discovered = {
-        "Predict_Dictionary": "ADABAS_FILE_102_CUSTOMER",
-        "CONNX_View": "VW_COMMERCIAL_ACCOUNTS",
-        "Target_Zip": intent.get("zip_code_range", "N/A"),
-        "Matched_Records": 3
+    # Software AG Predict Data Dictionary Mapping
+    predict_catalog = {
+        "Predict_File_Number": "102",
+        "Predict_Entity_Name": "CUSTOMER-MASTER",
+        "Field_Mappings": {
+            "AA": "CUSTOMER-ID (Numeric)",
+            "AB": "ZIP-CODE (Alpha, 5-char)",
+            "AC": "CREDIT-BALANCE (Numeric, Packed)"
+        },
+        "Access_Control": "READ/UPDATE-ALLOWED"
     }
-    logs.append("[STAGE 3: DISCOVERY] Metadata resolved via Software AG Predict Data Dictionary.")
+    logs.append("[STAGE 3: PREDICT] Data Dictionary lookup resolved File 102 & Field Mappings (AA, AB, AC).")
     
-    return {"discovered_resources": discovered, "audit_log": logs}
+    return {"predict_metadata": predict_catalog, "audit_log": logs}
+
+def connx_sql_node(state: AgentState) -> Dict[str, Any]:
+    """Stage 3: SQL Abstraction (CONNX SQL Gateway)"""
+    intent = state.get("parsed_intent", {})
+    logs = state.get("audit_log", [])
+    
+    connx_query = f"""SELECT ISN, ACCOUNT_NAME, ZIP_CODE, CREDIT_BALANCE 
+FROM CONNX_ADABAS.VW_COMMERCIAL_ACCOUNTS 
+WHERE ZIP_CODE = '{intent.get("zip_code_range", "N/A")}' 
+FOR UPDATE OF CREDIT_BALANCE;"""
+
+    logs.append("[STAGE 4: CONNX] Generated ANSI SQL query based on Predict metadata.")
+    
+    return {"connx_sql": connx_query, "audit_log": logs}
 
 def simulate_and_diff_node(state: AgentState) -> Dict[str, Any]:
-    """Stage 4: Adabas Impact Simulation & Software AG Natural Code Gen"""
+    """Stage 4: Natural Code Gen & Adabas Database Impact Simulator"""
     intent = state.get("parsed_intent", {})
     logs = state.get("audit_log", [])
     
-    # Generate Software AG Natural 4GL Code
-    natural_code = f"""* GENERATED SOFTWARE AG NATURAL RPC
+    # Software AG Natural 4GL RPC Code
+    natural_code = f"""* SOFTWARE AG NATURAL 4GL PROGRAM: UPDATE-CREDIT
 DEFINE DATA LOCAL
-1 CUSTOMER-VIEW VIEW OF ADABAS_FILE_102
-  2 ZIP-CODE
-  2 CREDIT-BALANCE
+1 CUST-VIEW VIEW OF ADABAS_FILE_102
+  2 ZIP-CODE (A5)
+  2 CREDIT-BALANCE (P10.2)
 END-DEFINE
-FIND CUSTOMER-VIEW WITH ZIP-CODE = '{intent.get("zip_code_range")}'
+FIND CUST-VIEW WITH ZIP-CODE = '{intent.get("zip_code_range")}'
   ADD {intent.get("amount")} TO CREDIT-BALANCE
   UPDATE
 END-FIND
 END TRANSACTION
 END"""
 
-    # Generate Data Diffs
+    # Adabas Simulator Output
     before_data = pd.DataFrame({
         "ISN (Adabas ID)": [1041, 1042, 1043],
         "Account": ["Corp_A", "Corp_B", "Corp_C"],
@@ -157,14 +175,17 @@ END"""
     if state.get("compliance_passed"):
         after_data["Credit_Balance"] = after_data["Credit_Balance"] + intent.get("amount", 0)
 
-    sim_res = {
-        "Status": "SIMULATION_COMPLETE",
-        "Estimated_Cost": "0.03 SU (Service Units)"
+    adabas_impact = {
+        "Target_Database_ID": "DBID-012 (Production Mainframe)",
+        "Target_File": "FILE-102 (CUSTOMER-MASTER)",
+        "Affected_ISN_Count": 3,
+        "Estimated_CPU_Cost": "0.03 Service Units (SU)",
+        "Lock_Type": "SHARED READ -> EXCLUSIVE WRITE"
     }
-    logs.append("[STAGE 4: SIMULATION] Adabas impact calculated & Natural 4GL code generated.")
+    logs.append("[STAGE 5: ADABAS SIMULATOR] Calculated database impact & generated Natural 4GL code.")
 
     return {
-        "simulation_result": sim_res, 
+        "adabas_impact": adabas_impact, 
         "natural_code": natural_code, 
         "before_df": before_data, 
         "after_df": after_data, 
@@ -172,25 +193,29 @@ END"""
     }
 
 def commit_node(state: AgentState) -> Dict[str, Any]:
-    """Stage 5: Commit Execution via Software AG Adabas REST Server"""
+    """Stage 5: Commit Execution via Adabas REST Gateway"""
     approved = state.get("human_approved", False)
     logs = state.get("audit_log", [])
 
     if not approved:
-        logs.append("[STAGE 5: COMMIT] Human Operator REJECTED transaction. Execution aborted.")
+        logs.append("[STAGE 6: COMMIT] Human Operator REJECTED transaction.")
         return {"commit_status": "❌ ABORTED: Transaction rejected by operator.", "audit_log": logs}
 
     if adabas_rest_url:
         try:
-            payload = {"file": "ADABAS_FILE_102", "intent": state.get("parsed_intent")}
+            payload = {
+                "file": "ADABAS_FILE_102",
+                "predict": state.get("predict_metadata"),
+                "intent": state.get("parsed_intent")
+            }
             response = requests.post(adabas_rest_url, json=payload, timeout=5)
             if response.status_code == 200:
-                logs.append("[STAGE 5: COMMIT] Live HTTP execution via Software AG Adabas REST Server succeeded.")
+                logs.append("[STAGE 6: COMMIT] Live HTTP execution via Software AG Adabas REST Gateway succeeded.")
                 return {"commit_status": "✅ COMMITTED: Live Adabas REST HTTP transaction successful.", "audit_log": logs}
         except Exception as e:
-            logs.append(f"[STAGE 5: COMMIT] REST error: {str(e)}. Falling back to Sandbox.")
+            logs.append(f"[STAGE 6: COMMIT] REST error: {str(e)}. Falling back to Sandbox.")
 
-    logs.append("[STAGE 5: COMMIT] Sandbox Adabas execution finalized.")
+    logs.append("[STAGE 6: COMMIT] Sandbox Adabas execution finalized.")
     return {"commit_status": "✅ COMMITTED: Sandbox Adabas transaction finalized.", "audit_log": logs}
 
 # ==========================================
@@ -200,16 +225,16 @@ def commit_node(state: AgentState) -> Dict[str, Any]:
 def build_langgraph_pipeline():
     workflow = StateGraph(AgentState)
 
-    # Add Pipeline Nodes
     workflow.add_node("parse_and_compliance", parse_and_compliance_node)
-    workflow.add_node("discover_resources", discover_resources_node)
+    workflow.add_node("predict_lookup", predict_lookup_node)
+    workflow.add_node("connx_sql", connx_sql_node)
     workflow.add_node("simulate_and_diff", simulate_and_diff_node)
     workflow.add_node("commit", commit_node)
 
-    # Define Graph Edges
     workflow.set_entry_point("parse_and_compliance")
-    workflow.add_edge("parse_and_compliance", "discover_resources")
-    workflow.add_edge("discover_resources", "simulate_and_diff")
+    workflow.add_edge("parse_and_compliance", "predict_lookup")
+    workflow.add_edge("predict_lookup", "connx_sql")
+    workflow.add_edge("connx_sql", "simulate_and_diff")
     workflow.add_edge("simulate_and_diff", "commit")
     workflow.add_edge("commit", END)
 
@@ -222,85 +247,98 @@ langgraph_agent = build_langgraph_pipeline()
 # ==========================================
 st.title("⚡ Adabas & Natural Agentic AI Gateway")
 
-# Visual Architecture Diagram (DOT format)
+# Precise Software AG Architecture Flow Diagram
 def render_architecture():
     return """
     digraph {
         rankdir=LR;
-        node [fontname="sans-serif", fontsize=10];
+        node [fontname="sans-serif", fontsize=9];
         edge [fontname="sans-serif", fontsize=8];
         
         A [label="Groq LLM\\n(AI Gateway)", shape=box, style=filled, fillcolor="#e1f5fe"];
         B [label="Software AG\\nPredict", shape=cylinder, style=filled, fillcolor="#fff9c4"];
-        C [label="Enterprise\\nGuardrails", shape=diamond, style=filled, fillcolor="#ffe0b2"];
-        D [label="HITL\\nApproval", shape=box, style=filled, fillcolor="#f3e5f5"];
-        E [label="Adabas REST\\nServer", shape=cylinder, style=filled, fillcolor="#c8e6c9"];
+        C [label="CONNX SQL\\nGateway", shape=box, style=filled, fillcolor="#e1bee7"];
+        D [label="Software AG\\nNatural 4GL", shape=box, style=filled, fillcolor="#ffe0b2"];
+        E [label="HITL Approval\\nGate", shape=diamond, style=filled, fillcolor="#f3e5f5"];
+        F [label="Adabas REST\\nServer", shape=cylinder, style=filled, fillcolor="#c8e6c9"];
         
-        A -> C [label=" Intent"];
-        C -> B [label=" Metadata"];
-        B -> D [label=" Impact"];
-        D -> E [label=" REST Payload"];
+        A -> B [label=" Parse Intent"];
+        B -> C [label=" Dictionary Lookup"];
+        C -> D [label=" SQL Abstraction"];
+        D -> E [label=" 4GL Simulation"];
+        E -> F [label=" Approved REST POST"];
     }
     """
 
 st.graphviz_chart(render_architecture())
 
-# PHASE 1: Simulate LangGraph Pipeline Execution
+# PHASE 1: Execution
 if st.button("Simulate AI Workflow", type="primary"):
-    with st.spinner("Executing LangGraph State Machine..."):
+    with st.spinner("Running Software AG Pipeline through LangGraph..."):
         initial_state: AgentState = {
             "raw_prompt": user_prompt, "parsed_intent": None, "compliance_passed": None,
-            "compliance_reason": None, "discovered_resources": None, "simulation_result": None,
-            "natural_code": None, "before_df": None, "after_df": None,
-            "human_approved": None, "commit_status": None, "audit_log": []
+            "compliance_reason": None, "predict_metadata": None, "connx_sql": None,
+            "natural_code": None, "adabas_impact": None, "before_df": None,
+            "after_df": None, "human_approved": None, "commit_status": None, "audit_log": []
         }
         
-        # Sequentially run LangGraph nodes up to the HITL approval point
         s1 = parse_and_compliance_node(initial_state)
-        s2 = discover_resources_node({**initial_state, **s1})
-        s3 = simulate_and_diff_node({**initial_state, **s1, **s2})
+        s2 = predict_lookup_node({**initial_state, **s1})
+        s3 = connx_sql_node({**initial_state, **s1, **s2})
+        s4 = simulate_and_diff_node({**initial_state, **s1, **s2, **s3})
         
-        # Freeze state for Human Verification
-        st.session_state["pending_txn"] = {**initial_state, **s1, **s2, **s3}
+        st.session_state["pending_txn"] = {**initial_state, **s1, **s2, **s3, **s4}
 
-# PHASE 2: Human-in-the-Loop Dashboard
+# PHASE 2: Human-in-the-Loop Software AG Component Grid
 if "pending_txn" in st.session_state:
     txn = st.session_state["pending_txn"]
     st.divider()
     
-    # Compliance Alert Banner
     if txn["compliance_passed"]:
         st.success(f"✅ **Enterprise Guardrails Cleared:** {txn['compliance_reason']}")
     else:
         st.error(f"❌ **Policy Violation Detected:** {txn['compliance_reason']}")
 
-    # Software AG Component Output Grid
+    # Clear 2x2 Grid for Software AG Components
     col1, col2 = st.columns(2)
+    
     with col1:
-        st.subheader("1. Parsed Intent")
-        st.caption("⚙️ **Component:** Groq Open-Weights LLM (`openai/gpt-oss-20b`)")
+        st.subheader("1. AI Intent Extraction")
+        st.caption("⚙️ **Component:** Groq LLM (`openai/gpt-oss-20b`)")
         st.json(txn["parsed_intent"])
         
-        st.subheader("2. Generated 4GL Logic")
+        st.subheader("3. SQL Abstraction Query")
+        st.caption("⚙️ **Component:** CONNX SQL Gateway")
+        st.code(txn["connx_sql"], language="sql")
+
+    with col2:
+        st.subheader("2. Data Dictionary Lookup")
+        st.caption("⚙️ **Component:** Software AG Predict Catalog")
+        st.json(txn["predict_metadata"])
+        
+        st.subheader("4. Generated 4GL Transaction Logic")
         st.caption("⚙️ **Component:** Software AG Natural")
         st.code(txn["natural_code"], language="text")
 
-    with col2:
-        st.subheader("3. Resource Discovery")
-        st.caption("⚙️ **Component:** Software AG Predict Data Dictionary")
-        st.json(txn["discovered_resources"])
-        
-        st.subheader("4. Target Table Diff")
-        st.caption("⚙️ **Component:** Adabas Simulator Engine")
+    st.divider()
+    st.subheader("5. Database Impact & Record Diff")
+    st.caption("⚙️ **Component:** Software AG Adabas Engine & Simulator")
+    
+    adabas_col1, adabas_col2 = st.columns([1, 2])
+    with adabas_col1:
+        st.markdown("**System Impact Metrics**")
+        st.json(txn["adabas_impact"])
+    with adabas_col2:
+        st.markdown("**Target Record State (Before vs Predicted After)**")
         diff_col1, diff_col2 = st.columns(2)
         with diff_col1:
-            st.markdown("**Current Record State**")
+            st.caption("Current Record State")
             st.dataframe(txn["before_df"], hide_index=True, use_container_width=True)
         with diff_col2:
-            st.markdown("**Predicted Post-Commit**")
+            st.caption("Predicted Post-Commit")
             st.dataframe(txn["after_df"], hide_index=True, use_container_width=True)
 
-    # PHASE 3: Commit Execution via LangGraph Node
+    # PHASE 3: Commit Gate
     st.divider()
     st.subheader("Action Approval Gate")
     st.caption("⚙️ **Component:** Software AG API Gateway / IAM")
@@ -315,7 +353,7 @@ if "pending_txn" in st.session_state:
 
     btn_col1, btn_col2 = st.columns(2)
     with btn_col1:
-        if st.button("✅ Approve & Commit to Adabas REST", use_container_width=True, disabled=not can_approve):
+        if st.button("✅ Approve & Commit to Adabas REST Gateway", use_container_width=True, disabled=not can_approve):
             txn["human_approved"] = True
             final_res = commit_node(txn)
             st.success(final_res["commit_status"])
