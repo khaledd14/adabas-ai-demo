@@ -2,3 +2,6 @@ streamlit
 langgraph
 langchain-groq
 pydantic
+requests
+pandas
+graphviz
