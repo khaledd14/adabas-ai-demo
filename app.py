@@ -113,8 +113,8 @@ class AgentState(TypedDict):
     entirex_payload: Optional[Dict[str, Any]]
     natural_code: Optional[str]
     adabas_impact: Optional[Dict[str, Any]]
-    before_df: Optional[pd.DataFrame]
-    after_df: Optional[pd.DataFrame]
+    before_df: Optional[List[Dict[str, Any]]]  # DataFrame stored as list of dicts for msgpack serialization
+    after_df: Optional[List[Dict[str, Any]]]   # DataFrame stored as list of dicts for msgpack serialization
     human_approved: Optional[bool]
     commit_status: Optional[str]
     audit_log: List[str]
@@ -230,7 +230,7 @@ WHERE ZIP_CODE BETWEEN '{bounds[0]}' AND '{bounds[-1]}';"""
     df = _mock_connx_accounts(zip_range, seed_salt="read")
 
     logs.append("[STAGE 5: CONNX] MOCKED read-only SQL Gateway query executed — no write possible on this path.")
-    return {"routing_decision": "CONNX", "connx_sql": connx_query, "before_df": df, "audit_log": logs}
+    return {"routing_decision": "CONNX", "connx_sql": connx_query, "before_df": df.to_dict(orient="records"), "audit_log": logs}
 
 
 # --- BRANCH 2: ENTIREX + NATURAL (TRANSACTIONAL WRITE, PREPARE ONLY) ---
@@ -304,8 +304,8 @@ END"""
         "routing_decision": "ENTIREX",
         "entirex_payload": payload,
         "natural_code": natural_code,
-        "before_df": before_df,
-        "after_df": after_df,
+        "before_df": before_df.to_dict(orient="records"),
+        "after_df": after_df.to_dict(orient="records"),
         "adabas_impact": impact,
         "audit_log": logs,
     }
@@ -317,8 +317,8 @@ def human_approval_node(state: AgentState) -> Dict[str, Any]:
     the top) once the caller sends Command(resume=True/False)."""
     payload = {
         "impact": state.get("adabas_impact", {}),
-        "before": (state.get("before_df").to_dict(orient="records") if state.get("before_df") is not None else []),
-        "after": (state.get("after_df").to_dict(orient="records") if state.get("after_df") is not None else []),
+        "before": state.get("before_df") or [],  # Already list-of-dicts from the node
+        "after": state.get("after_df") or [],    # Already list-of-dicts from the node
         "rpc_payload": state.get("entirex_payload", {}),
     }
     decision = interrupt(payload)
@@ -491,10 +491,14 @@ if state:
             diff_col1, diff_col2 = st.columns(2)
             with diff_col1:
                 st.caption("Current State")
-                st.dataframe(state.get("before_df"), hide_index=True)
+                before_data = state.get("before_df")
+                if before_data:
+                    st.dataframe(pd.DataFrame(before_data), hide_index=True)
             with diff_col2:
                 st.caption("Predicted State")
-                st.dataframe(state.get("after_df"), hide_index=True)
+                after_data = state.get("after_df")
+                if after_data:
+                    st.dataframe(pd.DataFrame(after_data), hide_index=True)
 
         st.divider()
         st.subheader("Human-in-the-Loop Gate")
@@ -530,7 +534,11 @@ if state:
             st.code(state.get("connx_sql", ""), language="sql")
         with col2:
             st.subheader("Adabas Query Results (simulated)")
-            st.dataframe(state.get("before_df"), hide_index=True, use_container_width=True)
+            before_data = state.get("before_df")
+            if before_data:
+                st.dataframe(pd.DataFrame(before_data), hide_index=True, use_container_width=True)
+            else:
+                st.write("No data")
 
         st.markdown("### Agent Audit Trail")
         st.code("\n".join(state.get("audit_log", [])), language="text")
