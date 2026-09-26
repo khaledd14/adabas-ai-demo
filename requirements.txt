@@ -1,7 +1,8 @@
 streamlit
-langgraph
+langgraph>=0.2.60
 langchain-groq
 pydantic
 requests
 pandas
 graphviz
+
